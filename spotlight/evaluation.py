@@ -75,7 +75,7 @@ def calc_embs_rank(embeds):
 
 def pairs_ndcg_score(embs):
     suffix = os.environ['SUFFIX']
-    vindex_pairs_df = pd.read_parquet("data/test-pairs-indexed-aug-28-phase" + suffix)
+    vindex_pairs_df = pd.read_parquet(os.environ['BASE_DIR'] + "/data/test-pairs-indexed-aug-28-phase" + suffix)
     embs_ranks = calc_embs_rank(embs)
     number_of_videos = len(embs_ranks)
     lookup_table = embs_ranks.values.ravel()
@@ -87,7 +87,7 @@ def pairs_ndcg_score(embs):
 def calc_als_pairs_ndcg():
     suffix = os.environ['SUFFIX']
     als_embds = pd.read_parquet("s3a://tubi-playground-production/smistry/emb3/als-embs-pandas-aug-28-threshold-0.2")
-    aa = pd.read_parquet("data/video2index-pandas-aug-28-phase" + suffix)
+    aa = pd.read_parquet(os.environ['BASE_DIR'] + "/data/video2index-pandas-aug-28-phase" + suffix)
     videoid2index = dict(zip(aa["k"], aa["v"]))
 
     number_of_videos = len(videoid2index)
@@ -101,7 +101,7 @@ def calc_als_pairs_ndcg():
 
 def nn_pairs_ndcg_score(model):
     suffix = os.environ['SUFFIX']
-    aa = pd.read_parquet("data/video2index-pandas-aug-28-phase" + suffix)
+    aa = pd.read_parquet(os.environ['BASE_DIR'] + "/data/video2index-pandas-aug-28-phase" + suffix)
     videoid2index = dict(zip(aa["k"], aa["v"]))
 
     model.eval()
@@ -138,8 +138,8 @@ def eval_results_in_batch(implicit_model,
 
 def evaluate_hit_ratio_and_ndcg(implicit_model):
     suffix = os.environ['SUFFIX']
-    validate_neg_flatten_vids = pd.read_parquet("data/validate-neg-flatten-aug-28-phase" + suffix)
-    validate_pos_flatten_vids = pd.read_parquet("data/validate-pos-flatten-aug-28-phase" + suffix)
+    validate_neg_flatten_vids = pd.read_parquet(os.environ['BASE_DIR'] + "/data/validate-neg-flatten-aug-28-phase" + suffix)
+    validate_pos_flatten_vids = pd.read_parquet(os.environ['BASE_DIR'] + "/data/validate-pos-flatten-aug-28-phase" + suffix)
 
     evaluate_data = [validate_pos_flatten_vids["uindex"].to_numpy(),
                      validate_pos_flatten_vids["vindex"].to_numpy(),
