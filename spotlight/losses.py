@@ -163,6 +163,48 @@ def adaptive_hinge_loss(positive_predictions, negative_predictions, mask=None):
 
     highest_negative_predictions, _ = torch.max(negative_predictions, 0)
 
+    return bpr_loss(positive_predictions, highest_negative_predictions.squeeze(), mask=mask)
+
+
+def adaptive_hinge_loss2(positive_predictions, negative_predictions, mask=None):
+    """
+    Adaptive hinge pairwise loss function. Takes a set of predictions
+    for implicitly negative items, and selects those that are highest,
+    thus sampling those negatives that are closes to violating the
+    ranking implicit in the pattern of user interactions.
+
+    Approximates the idea of weighted approximate-rank pairwise loss
+    introduced in [2]_
+
+    Parameters
+    ----------
+
+    positive_predictions: tensor
+        Tensor containing predictions for known positive items.
+    negative_predictions: tensor
+        Iterable of tensors containing predictions for sampled negative items.
+        More tensors increase the likelihood of finding ranking-violating
+        pairs, but risk overfitting.
+    mask: tensor, optional
+        A binary tensor used to zero the loss from some entries
+        of the loss tensor.
+
+    Returns
+    -------
+
+    loss, float
+        The mean value of the loss function.
+
+    References
+    ----------
+
+    .. [2] Weston, Jason, Samy Bengio, and Nicolas Usunier. "Wsabie:
+       Scaling up to large vocabulary image annotation." IJCAI.
+       Vol. 11. 2011.
+    """
+
+    highest_negative_predictions, _ = torch.max(negative_predictions, 0)
+
     return hinge_loss(positive_predictions, highest_negative_predictions.squeeze(), mask=mask)
 
 

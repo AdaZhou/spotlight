@@ -137,6 +137,13 @@ class MLP(torch.nn.Module):
         self.num_users = config['num_users']
         self.num_items = config['num_items']
         self.latent_dim = config['latent_dim']
+        self.dropout_rate = None
+        if "dropout" in config:
+            self.dropout_rate = config["dropout"]
+
+        self.batch_norm = None
+        if "batch_norm" in config:
+            self.batch_norm = config["batch_norm"]
 
         self.embedding_user = torch.nn.Embedding(num_embeddings=self.num_users, embedding_dim=self.latent_dim)
         self.embedding_item = torch.nn.Embedding(num_embeddings=self.num_items, embedding_dim=self.latent_dim)
@@ -154,8 +161,11 @@ class MLP(torch.nn.Module):
         for idx, _ in enumerate(range(len(self.fc_layers))):
             vector = self.fc_layers[idx](vector)
             vector = torch.nn.ReLU()(vector)
-            # vector = torch.nn.BatchNorm1d()(vector)
-            # vector = torch.nn.Dropout(p=0.5)(vector)
+            if self.batch_norm:
+                vector = torch.nn.BatchNorm1d()(vector)
+            if self.dropout_rate:
+                vector = torch.nn.Dropout(p=self.dropout_rate)(vector)
+
         logits = self.affine_output(vector)
         return logits
 
@@ -211,4 +221,3 @@ class NeuMF(torch.nn.Module):
 
     def init_weight(self):
         pass
-
