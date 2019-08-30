@@ -1,9 +1,158 @@
 import numpy as np
 
 import scipy.stats as st
-
+import pandas as pd
+import math
+import pickle
+import torch
 
 FLOAT_MAX = np.finfo(np.float32).max
+
+vindex_pairs_df = pd.read_parquet("s3a://tubi-playground-production/smistry/emb3/test-pairs-indexed-aug-28-threshold-0.2")
+aa = pd.read_parquet("s3a://tubi-playground-production/smistry/emb3/video2index-pandas-aug-28-phase1")
+videoid2index = dict(zip(aa["k"], aa["v"]))
+
+validate_neg_flatten_vids = pd.read_parquet("s3a://tubi-playground-production/smistry/emb3/validate-neg-flatten-aug-28-phase1-.1")
+validate_pos_flatten_vids = pd.read_parquet("s3a://tubi-playground-production/smistry/emb3/validate-pos-flatten-aug-28-phase1-.1")
+
+evaluate_data =  [validate_pos_flatten_vids["uindex"].to_numpy(),
+                  validate_pos_flatten_vids["vindex"].to_numpy(),
+                  validate_neg_flatten_vids["uindex"].to_numpy(),
+                   validate_neg_flatten_vids["nvindex"].to_numpy()]
+
+
+
+class MetronAtK(object):
+    def __init__(self, top_k):
+        self._top_k = top_k
+        self._subjects = None  # Subjects which we ran evaluation on
+
+    @property
+    def top_k(self):
+        return self._top_k
+
+    @top_k.setter
+    def top_k(self, top_k):
+        self._top_k = top_k
+
+    @property
+    def subjects(self):
+        return self._subjects
+
+    @subjects.setter
+    def subjects(self, subjects):
+        """
+        args:
+            subjects: list, [test_users, test_items, test_scores, negative users, negative items, negative scores]
+        """
+        assert isinstance(subjects, list)
+        test_users, test_items, test_scores = subjects[0], subjects[1], subjects[2]
+        neg_users, neg_items, neg_scores = subjects[3], subjects[4], subjects[5]
+        # the golden set
+        test = pd.DataFrame({'user': test_users,
+                             'test_item': test_items,
+                             'test_score': test_scores})
+        # the full set
+        full = pd.DataFrame({'user': neg_users + test_users,
+                             'item': neg_items + test_items,
+                             'score': neg_scores + test_scores})
+        full = pd.merge(full, test, on=['user'], how='left')
+        # rank the items according to the scores for each user
+        full['rank'] = full.groupby('user')['score'].rank(method='first', ascending=False)
+        full.sort_values(['user', 'rank'], inplace=True)
+        self._subjects = full
+
+    def cal_hit_ratio(self):
+        """Hit Ratio @ top_K"""
+        full, top_k = self._subjects, self._top_k
+        top_k = full[full['rank'] <= top_k]
+        test_in_top_k = top_k[top_k['test_item'] == top_k['item']]  # golden items hit in the top_K items
+        return len(test_in_top_k) * 1.0 / full['user'].nunique()
+
+    def cal_ndcg(self):
+        full, top_k = self._subjects, self._top_k
+        top_k = full[full['rank'] <= top_k]
+        test_in_top_k = top_k[top_k['test_item'] == top_k['item']]
+        test_in_top_k['ndcg'] = test_in_top_k['rank'].apply(
+            lambda x: math.log(2) / math.log(1 + x))  # the rank starts from 1
+        return test_in_top_k['ndcg'].sum() * 1.0 / full['user'].nunique()
+
+def calc_embs_rank(embeds):
+    embeds_norm = np.divide(embeds, np.sqrt(np.square(embeds).sum(axis=1)).reshape(-1, 1))
+    cosine_sims = 1 - np.dot(embeds_norm, np.transpose(embeds_norm))
+    cosine_sims = cosine_sims.filled(2)
+    return pd.DataFrame(cosine_sims).rank(method="first")
+
+def pairs_ndcg_score(embs):
+    embs_ranks = calc_embs_rank(embs)
+    number_of_videos = len(embs_ranks)
+    lookup_table = embs_ranks.values.ravel()
+    ndcg_vals = vindex_pairs_df.apply(
+        lambda r: (1. / np.log(lookup_table[r["v1"] * number_of_videos + r["v2"]] + 1.)) * r["count"], axis=1)
+    return ndcg_vals.mean()
+
+
+def calc_als_pairs_ndcg():
+    als_embds = pd.read_parquet("s3a://tubi-playground-production/smistry/emb3/als-embs-pandas-aug-28-threshold-0.2")
+    number_of_videos = len(videoid2index)
+    embs = np.ma.masked_all((number_of_videos, 100))
+    for i, row in als_embds.iterrows():
+        vindex = row["vindex"]
+        if vindex != -1:
+            embs[vindex, :] = row["vector"]
+    return pairs_ndcg_score(embs)
+
+
+def nn_pairs_ndcg_score(model):
+    model.eval()
+    number_of_videos = len(videoid2index)
+    with torch.no_grad():
+        raw_embeds = model.get_embeddings().detach()
+        raw_embeds = raw_embeds.cpu()
+        raw_embeds = raw_embeds.numpy()
+        embed_size = model.get_embedding_size()
+
+        embs = np.ma.masked_all((number_of_videos, embed_size))
+        for idx, emb in enumerate(raw_embeds):
+            #if idx in valid_ids:
+            embs[idx, :] = emb
+        return pairs_ndcg_score(embs)
+
+
+def eval_results_in_batch(implicit_model,
+                          test_users,
+                          test_items,
+                          batch_size=1024):
+
+    total_size = len(test_users)
+    tmp_ranges = np.arange(0, total_size + batch_size, batch_size)
+    lower_indices = tmp_ranges[:-1]
+    upper_indices = tmp_ranges[1:]
+    subsets = []
+    for i in range(len(lower_indices)):
+        subset_users = test_users[lower_indices[i]:upper_indices[i]]
+        subset_items = test_items[lower_indices[i]:upper_indices[i]]
+        if len(subset_users) > 0:
+            subsets.append(implicit_model.predict(test_users, test_items))
+    return np.concatenate(subsets, 0)
+
+def evaluate_hit_ratio_and_ndcg(implicit_model):
+    metron = MetronAtK(top_k=10)
+    with torch.no_grad():
+        test_users, test_items = evaluate_data[0], evaluate_data[1]
+        negative_users, negative_items = evaluate_data[2], evaluate_data[3]
+
+        test_scores = eval_results_in_batch(implicit_model, test_users, test_items, batch_size=1024 * 3)
+        negative_scores = eval_results_in_batch(implicit_model, negative_users, negative_items, batch_size=1024 * 3)
+
+        metron.subjects = [test_users.tolist(),
+                           test_items.tolist(),
+                           test_scores.tolist(),
+                           negative_users.tolist(),
+                           negative_items.tolist(),
+                           negative_scores.tolist()]
+        hit_ratio, ndcg = metron.cal_hit_ratio(), metron.cal_ndcg()
+    return hit_ratio, ndcg
 
 
 def mrr_score(model, test, train=None):

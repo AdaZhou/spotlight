@@ -17,7 +17,7 @@ from spotlight.losses import (adaptive_hinge_loss,
 from spotlight.factorization.representations import BilinearNet
 from spotlight.sampling import sample_items
 from spotlight.torch_utils import cpu, gpu, minibatch, set_seed, shuffle
-
+from torch.utils.tensorboard import SummaryWriter
 
 class ImplicitFactorizationModel(object):
     """
@@ -85,7 +85,13 @@ class ImplicitFactorizationModel(object):
                  representation=None,
                  sparse=False,
                  random_state=None,
-                 num_negative_samples=5):
+                 num_negative_samples=5,
+                 betas=(0.9, 0.999),
+                 log_loss_interval=500,
+                 log_eval_interval=5000,
+                 notify_loss_completion=None,
+                 notify_batch_eval_completion=None,
+                 notify_epoch_completion=None):
 
         assert loss in ('pointwise',
                         'bpr',
@@ -110,9 +116,14 @@ class ImplicitFactorizationModel(object):
         self._net = None
         self._optimizer = None
         self._loss_func = None
-
+        self._log_eval_interval = log_eval_interval
+        self._betas = betas
+        self._log_loss_interval = log_loss_interval
         set_seed(self._random_state.randint(-10**8, 10**8),
                  cuda=self._use_cuda)
+        self._notify_loss_completion = notify_loss_completion
+        self._notify_batch_eval_completion = notify_batch_eval_completion
+        self._notify_epoch_completion = notify_epoch_completion
 
     def __repr__(self):
 
@@ -144,7 +155,8 @@ class ImplicitFactorizationModel(object):
             self._optimizer = optim.Adam(
                 self._net.parameters(),
                 weight_decay=self._l2,
-                lr=self._learning_rate
+                lr=self._learning_rate,
+                betas=self._betas
             )
         else:
             self._optimizer = self._optimizer_func(self._net.parameters())
@@ -206,6 +218,7 @@ class ImplicitFactorizationModel(object):
             self._initialize(interactions)
 
         self._check_input(user_ids, item_ids)
+        time_step = 0
 
         for epoch_num in range(self._n_iter):
 
@@ -219,13 +232,16 @@ class ImplicitFactorizationModel(object):
                                   self._use_cuda)
 
             epoch_loss = 0.0
+            interval_loss = 0.0
+            interval_batches = 0.0
+            epoch_batches = 0.0
 
             for (minibatch_num,
                  (batch_user,
                   batch_item)) in enumerate(minibatch(user_ids_tensor,
                                                       item_ids_tensor,
                                                       batch_size=self._batch_size)):
-
+                self._net.train(True)
                 positive_prediction = self._net(batch_user, batch_item)
 
                 if self._loss == 'adaptive_hinge':
@@ -237,15 +253,44 @@ class ImplicitFactorizationModel(object):
                 self._optimizer.zero_grad()
 
                 loss = self._loss_func(positive_prediction, negative_prediction)
-                epoch_loss += loss.item()
+                loss_val = loss.item()
+                epoch_loss += loss_val
+                interval_loss += loss_val
+                interval_batches += 1
 
                 loss.backward()
                 self._optimizer.step()
 
-            epoch_loss /= minibatch_num + 1
+                if time_step%self._log_loss_interval == 0:
+                    if self._notify_loss_completion:
+                        self._notify_loss_completion(epoch_num,
+                                                     time_step,
+                                                     interval_loss/interval_batches,
+                                                     self._net,
+                                                     self)
+
+                if time_step%self._log_eval_interval == 0:
+                    if self._notify_batch_eval_completion:
+                        self._notify_batch_eval_completion(epoch_num,
+                                                           time_step,
+                                                           interval_loss/interval_batches,
+                                                           self._net,
+                                                           self)
+
+                if time_step % self._log_loss_interval == 0:
+                    interval_loss = 0.0
+                    interval_batches = 0.0
+
+                time_step+=1
+
+            epoch_batches += 1
+            epoch_loss /= epoch_batches
 
             if verbose:
                 print('Epoch {}: loss {}'.format(epoch_num, epoch_loss))
+
+            if self._notify_epoch_completion:
+                self._notify_epoch_completion(epoch_num, epoch_loss, self._net, self)
 
             if np.isnan(epoch_loss) or epoch_loss == 0.0:
                 raise ValueError('Degenerate epoch loss: {}'
