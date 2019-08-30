@@ -11,9 +11,6 @@ FLOAT_MAX = np.finfo(np.float32).max
 
 suffix = os.environ['SUFFIX']
 
-vindex_pairs_df = pd.read_parquet("data/test-pairs-indexed-aug-28-phase" + suffix)
-aa = pd.read_parquet("data/video2index-pandas-aug-28-phase" + suffix)
-videoid2index = dict(zip(aa["k"], aa["v"]))
 
 validate_neg_flatten_vids = pd.read_parquet("data/validate-neg-flatten-aug-28-phase" + suffix)
 validate_pos_flatten_vids = pd.read_parquet("data/validate-pos-flatten-aug-28-phase" + suffix)
@@ -87,6 +84,7 @@ def calc_embs_rank(embeds):
     return pd.DataFrame(cosine_sims).rank(method="first")
 
 def pairs_ndcg_score(embs):
+    vindex_pairs_df = pd.read_parquet("data/test-pairs-indexed-aug-28-phase" + suffix)
     embs_ranks = calc_embs_rank(embs)
     number_of_videos = len(embs_ranks)
     lookup_table = embs_ranks.values.ravel()
@@ -97,6 +95,9 @@ def pairs_ndcg_score(embs):
 
 def calc_als_pairs_ndcg():
     als_embds = pd.read_parquet("s3a://tubi-playground-production/smistry/emb3/als-embs-pandas-aug-28-threshold-0.2")
+    aa = pd.read_parquet("data/video2index-pandas-aug-28-phase" + suffix)
+    videoid2index = dict(zip(aa["k"], aa["v"]))
+
     number_of_videos = len(videoid2index)
     embs = np.ma.masked_all((number_of_videos, 100))
     for i, row in als_embds.iterrows():
@@ -107,6 +108,9 @@ def calc_als_pairs_ndcg():
 
 
 def nn_pairs_ndcg_score(model):
+    aa = pd.read_parquet("data/video2index-pandas-aug-28-phase" + suffix)
+    videoid2index = dict(zip(aa["k"], aa["v"]))
+
     model.eval()
     number_of_videos = len(videoid2index)
     with torch.no_grad():
