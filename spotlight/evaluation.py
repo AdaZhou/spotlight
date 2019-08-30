@@ -115,7 +115,7 @@ def nn_pairs_ndcg_score(model):
         raw_embeds = raw_embeds.numpy()
         embed_size = model.get_embedding_size()
 
-        embs = np.ma.masked_all((number_of_videos, embed_size))
+        embs = np.ma.masked_all((number_of_videos+10, embed_size))
         for idx, emb in enumerate(raw_embeds):
             #if idx in valid_ids:
             embs[idx, :] = emb
