@@ -5,15 +5,18 @@ import pandas as pd
 import math
 import pickle
 import torch
+import os
 
 FLOAT_MAX = np.finfo(np.float32).max
 
+suffix = os.environ['SUFFIX']
+
 vindex_pairs_df = pd.read_parquet("data/test-pairs-indexed-aug-28-threshold-0.2")
-aa = pd.read_parquet("data/video2index-pandas-aug-28-phase1")
+aa = pd.read_parquet("data/video2index-pandas-aug-28-phase" + suffix)
 videoid2index = dict(zip(aa["k"], aa["v"]))
 
-validate_neg_flatten_vids = pd.read_parquet("data/validate-neg-flatten-aug-28-phase1-.1")
-validate_pos_flatten_vids = pd.read_parquet("data/validate-pos-flatten-aug-28-phase1-.1")
+validate_neg_flatten_vids = pd.read_parquet("data/validate-neg-flatten-aug-28-phase" + suffix)
+validate_pos_flatten_vids = pd.read_parquet("data/validate-pos-flatten-aug-28-phase" + suffix)
 
 evaluate_data =  [validate_pos_flatten_vids["uindex"].to_numpy(),
                   validate_pos_flatten_vids["vindex"].to_numpy(),
