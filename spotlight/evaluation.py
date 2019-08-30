@@ -11,7 +11,7 @@ FLOAT_MAX = np.finfo(np.float32).max
 
 suffix = os.environ['SUFFIX']
 
-vindex_pairs_df = pd.read_parquet("data/test-pairs-indexed-aug-28-threshold-0.2")
+vindex_pairs_df = pd.read_parquet("data/test-pairs-indexed-aug-28-phase" + suffix)
 aa = pd.read_parquet("data/video2index-pandas-aug-28-phase" + suffix)
 videoid2index = dict(zip(aa["k"], aa["v"]))
 
