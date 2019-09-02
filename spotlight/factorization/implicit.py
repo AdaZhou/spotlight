@@ -91,7 +91,9 @@ class ImplicitFactorizationModel(object):
                  log_eval_interval=5000,
                  notify_loss_completion=None,
                  notify_batch_eval_completion=None,
-                 notify_epoch_completion=None):
+                 notify_epoch_completion=None,
+                 amsgrad=False,
+                 adamw=None):
 
         assert loss in ('pointwise',
                         'bpr',
@@ -124,6 +126,8 @@ class ImplicitFactorizationModel(object):
         self._notify_loss_completion = notify_loss_completion
         self._notify_batch_eval_completion = notify_batch_eval_completion
         self._notify_epoch_completion = notify_epoch_completion
+        self._adamw = adamw
+        self._amsgrad = amsgrad
 
     def __repr__(self):
 
@@ -151,12 +155,21 @@ class ImplicitFactorizationModel(object):
                 self._use_cuda
             )
 
-        if self._optimizer_func is None:
+        if self._adamw:
+            self._optimizer = optim.AdamW(
+                self._net.parameters(),
+                weight_decay=self._l2,
+                lr=self._learning_rate,
+                betas=self._betas,
+                amsgrad=self._amsgrad
+            )
+        elif self._optimizer_func is None:
             self._optimizer = optim.Adam(
                 self._net.parameters(),
                 weight_decay=self._l2,
                 lr=self._learning_rate,
-                betas=self._betas
+                betas=self._betas,
+                amsgrad=self._amsgrad
             )
         else:
             self._optimizer = self._optimizer_func(self._net.parameters())
