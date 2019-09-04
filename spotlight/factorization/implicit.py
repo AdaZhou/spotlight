@@ -273,10 +273,10 @@ class ImplicitFactorizationModel(object):
                 loss_val = loss.item()
                 epoch_loss += loss_val
                 interval_loss += loss_val
-                interval_batches += 1
 
                 loss.backward()
                 self._optimizer.step()
+                interval_batches += 1
 
                 if time_step%self._log_loss_interval == 0:
                     if self._notify_loss_completion:
