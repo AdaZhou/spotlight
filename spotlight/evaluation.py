@@ -9,7 +9,7 @@ import os
 
 FLOAT_MAX = np.finfo(np.float32).max
 
-
+from ray import tune
 
 
 class MetronAtK(object):
@@ -86,7 +86,7 @@ def pairs_ndcg_score(embs):
 
 def calc_als_pairs_ndcg():
     suffix = os.environ['SUFFIX']
-    als_embds = pd.read_parquet("s3a://tubi-playground-production/smistry/emb3/als-embs-pandas-aug-28-threshold-0.2")
+    als_embds = pd.read_parquet("/home/ec2-user/emb3/data/als-embs-pandas-aug-28-phase" + suffix)
     aa = pd.read_parquet(os.environ['BASE_DIR'] + "/data/video2index-pandas-aug-28-phase" + suffix)
     videoid2index = dict(zip(aa["k"], aa["v"]))
 
@@ -98,6 +98,54 @@ def calc_als_pairs_ndcg():
             embs[vindex, :] = row["vector"]
     return pairs_ndcg_score(embs)
 
+
+def calc_als_HR_and_NDCG(evaluate_data):
+    suffix = os.environ['SUFFIX']
+    aa = pd.read_parquet(os.environ['BASE_DIR'] + "/data/video2index-pandas-aug-28-phase" + suffix)
+    als_embds = pd.read_parquet("/home/ec2-user/emb3/data/als-embs-pandas-aug-28-phase" + suffix)
+    videoid2index = dict(zip(aa["k"], aa["v"]))
+    number_of_videos = len(videoid2index)
+    aembs = np.zeros((number_of_videos, 100))
+    for i, row in als_embds.iterrows():
+        vindex = row["vindex"]
+        aembs[vindex, :] = row["vector"]
+
+    # evaluate_data = validation_data
+    test_users, test_items = evaluate_data[0], evaluate_data[1]
+    negative_users, negative_items = evaluate_data[2], evaluate_data[3]
+
+    suffix = os.environ["SUFFIX"]
+    train_data_path = "data/train-aug-28-phase" + suffix
+    train_regr_dataset = pd.read_parquet(train_data_path)
+
+    uniq_test_users = list(set(test_users))
+    test_users_vids = train_regr_dataset[train_regr_dataset["uindex"].isin(uniq_test_users)].groupby("uindex")[
+        "vindex"].agg(list)
+    user_avg_vid_embs = test_users_vids.apply(lambda x: aembs[x].mean(axis=0))
+
+    from numpy.linalg import norm
+
+    def cosine_sims(a, b):
+        return np.dot(a, b) / (norm(a) * norm(b))
+
+    pos_scores = []
+    for tu, ti in zip(test_users, test_items):
+        pos_scores.append(cosine_sims(user_avg_vid_embs[tu], aembs[ti]))
+
+    neg_scores = []
+    for tu, ti in zip(negative_users, negative_items):
+        neg_scores.append(cosine_sims(user_avg_vid_embs[tu], aembs[ti]))
+
+    metron = MetronAtK(top_k=10)
+
+    metron.subjects = [test_users.tolist(),
+                       test_items.tolist(),
+                       pos_scores,
+                       negative_users.tolist(),
+                       negative_items.tolist(),
+                       neg_scores]
+    hit_ratio, ndcg = metron.cal_hit_ratio(), metron.cal_ndcg()
+    return hit_ratio, ndcg
 
 def nn_pairs_ndcg_score(model):
     suffix = os.environ['SUFFIX']
@@ -136,7 +184,7 @@ def eval_results_in_batch(implicit_model,
             subsets.append(implicit_model.predict(test_users, test_items))
     return np.concatenate(subsets, 0)
 
-def evaluate_hit_ratio_and_ndcg(implicit_model):
+def evaluate_hit_ratio_and_ndcg2(implicit_model):
     suffix = os.environ['SUFFIX']
     validate_neg_flatten_vids = pd.read_parquet(os.environ['BASE_DIR'] + "/data/validate-neg-flatten-aug-28-phase" + suffix)
     validate_pos_flatten_vids = pd.read_parquet(os.environ['BASE_DIR'] + "/data/validate-pos-flatten-aug-28-phase" + suffix)
@@ -163,6 +211,54 @@ def evaluate_hit_ratio_and_ndcg(implicit_model):
         hit_ratio, ndcg = metron.cal_hit_ratio(), metron.cal_ndcg()
     return hit_ratio, ndcg
 
+
+def eval_results_in_batch(serve_model,
+                          test_users,
+                          test_items,
+                          batch_size=1024):
+    total_size = len(test_users)
+    tmp_ranges = np.arange(0, total_size + batch_size, batch_size)
+    lower_indices = tmp_ranges[:-1]
+    upper_indices = tmp_ranges[1:]
+    subsets = []
+    for i in range(len(lower_indices)):
+        subset_users = test_users[lower_indices[i]:upper_indices[i]]
+        subset_items = test_items[lower_indices[i]:upper_indices[i]]
+        if len(subset_users) > 0:
+            subsets.append(serve_model(subset_users, subset_items))
+    return torch.cat(subsets, 0)
+
+def evaluate_hit_ratio_and_ndcg(model,
+                                evaluate_data,
+                                use_cuda=True):
+    model.train(False)
+    with torch.no_grad():
+        test_users, test_items = torch.LongTensor(evaluate_data[0]), torch.LongTensor(evaluate_data[1])
+        negative_users, negative_items = torch.LongTensor(evaluate_data[2]), torch.LongTensor(evaluate_data[3])
+        if use_cuda is True:
+            test_users = test_users.cuda()
+            test_items = test_items.cuda()
+            negative_users = negative_users.cuda()
+            negative_items = negative_items.cuda()
+        test_scores = eval_results_in_batch(model, test_users, test_items, batch_size=1024 * 3)
+        negative_scores = eval_results_in_batch(model, negative_users, negative_items, batch_size=1024 * 3)
+        if use_cuda is True:
+            test_users = test_users.cpu()
+            test_items = test_items.cpu()
+            test_scores = test_scores.cpu()
+            negative_users = negative_users.cpu()
+            negative_items = negative_items.cpu()
+            negative_scores = negative_scores.cpu()
+    metron = MetronAtK(top_k=10)
+
+    metron.subjects = [test_users.data.view(-1).tolist(),
+                       test_items.data.view(-1).tolist(),
+                       test_scores.data.view(-1).tolist(),
+                       negative_users.data.view(-1).tolist(),
+                       negative_items.data.view(-1).tolist(),
+                       negative_scores.data.view(-1).tolist()]
+    hit_ratio, ndcg = metron.cal_hit_ratio(), metron.cal_ndcg()
+    return hit_ratio, ndcg
 
 def mrr_score(model, test, train=None):
     """

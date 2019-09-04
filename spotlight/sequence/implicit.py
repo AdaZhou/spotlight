@@ -13,7 +13,8 @@ from spotlight.helpers import _repr_model
 from spotlight.losses import (adaptive_hinge_loss,
                               bpr_loss,
                               hinge_loss,
-                              pointwise_loss)
+                              pointwise_loss,
+                              adaptive_bpr)
 from spotlight.sequence.representations import (PADDING_IDX, CNNNet,
                                                 LSTMNet,
                                                 MixtureLSTMNet,
@@ -94,12 +95,21 @@ class ImplicitSequenceModel(object):
                  use_cuda=False,
                  sparse=False,
                  random_state=None,
-                 num_negative_samples=5):
+                 num_negative_samples=5,
+                 betas=(0.9, 0.999),
+                 log_loss_interval=500,
+                 log_eval_interval=5000,
+                 notify_loss_completion=None,
+                 notify_batch_eval_completion=None,
+                 notify_epoch_completion=None,
+                 amsgrad=False,
+                 adamw=None):
 
         assert loss in ('pointwise',
                         'bpr',
                         'hinge',
-                        'adaptive_hinge')
+                        'adaptive_hinge',
+                        'adaptive_bpr')
 
         if isinstance(representation, str):
             assert representation in ('pooling',
@@ -127,6 +137,15 @@ class ImplicitSequenceModel(object):
 
         set_seed(self._random_state.randint(-10**8, 10**8),
                  cuda=self._use_cuda)
+
+        self._log_eval_interval = log_eval_interval
+        self._betas = betas
+        self._log_loss_interval = log_loss_interval
+        self._notify_loss_completion = notify_loss_completion
+        self._notify_batch_eval_completion = notify_batch_eval_completion
+        self._notify_epoch_completion = notify_epoch_completion
+        self._adamw = adamw
+        self._amsgrad = amsgrad
 
     def __repr__(self):
 
@@ -161,11 +180,21 @@ class ImplicitSequenceModel(object):
 
         self._net = gpu(self._net, self._use_cuda)
 
-        if self._optimizer_func is None:
+        if self._adamw:
+            self._optimizer = optim.AdamW(
+                self._net.parameters(),
+                weight_decay=self._l2,
+                lr=self._learning_rate,
+                betas=self._betas,
+                amsgrad=self._amsgrad
+            )
+        elif self._optimizer_func is None:
             self._optimizer = optim.Adam(
                 self._net.parameters(),
                 weight_decay=self._l2,
-                lr=self._learning_rate
+                lr=self._learning_rate,
+                betas=self._betas,
+                amsgrad=self._amsgrad
             )
         else:
             self._optimizer = self._optimizer_func(self._net.parameters())
@@ -176,6 +205,8 @@ class ImplicitSequenceModel(object):
             self._loss_func = bpr_loss
         elif self._loss == 'hinge':
             self._loss_func = hinge_loss
+        elif self._loss == 'adaptive_bpr':
+            self._loss_func = adaptive_bpr
         else:
             self._loss_func = adaptive_hinge_loss
 
@@ -212,6 +243,8 @@ class ImplicitSequenceModel(object):
 
         self._check_input(sequences)
 
+        time_step = 0
+
         for epoch_num in range(self._n_iter):
 
             sequences = shuffle(sequences,
@@ -221,6 +254,9 @@ class ImplicitSequenceModel(object):
                                    self._use_cuda)
 
             epoch_loss = 0.0
+            interval_loss = 0.0
+            interval_batches = 0.0
+            epoch_batches = 0.0
 
             for minibatch_num, batch_sequence in enumerate(minibatch(sequences_tensor,
                                                                      batch_size=self._batch_size)):
@@ -254,10 +290,34 @@ class ImplicitSequenceModel(object):
 
                 self._optimizer.step()
 
-            epoch_loss /= minibatch_num + 1
+                if time_step%self._log_loss_interval == 0:
+                    if self._notify_loss_completion:
+                        self._notify_loss_completion(epoch_num,
+                                                     time_step,
+                                                     interval_loss/interval_batches,
+                                                     self._net,
+                                                     self)
+
+                if time_step%self._log_eval_interval == 0:
+                    if self._notify_batch_eval_completion:
+                        self._notify_batch_eval_completion(epoch_num,
+                                                           time_step,
+                                                           interval_loss/interval_batches,
+                                                           self._net,
+                                                           self)
+                if time_step % self._log_loss_interval == 0:
+                    interval_loss = 0.0
+                    interval_batches = 0.0
+                time_step += 1
+
+            epoch_batches += 1
+            epoch_loss /= epoch_batches
 
             if verbose:
                 print('Epoch {}: loss {}'.format(epoch_num, epoch_loss))
+
+            if self._notify_epoch_completion:
+                self._notify_epoch_completion(epoch_num, epoch_loss, self._net, self)
 
             if np.isnan(epoch_loss) or epoch_loss == 0.0:
                 raise ValueError('Degenerate epoch loss: {}'

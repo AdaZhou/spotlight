@@ -124,7 +124,7 @@ def hinge_loss(positive_predictions, negative_predictions, mask=None):
     return loss.mean()
 
 
-def adaptive_hinge_loss(positive_predictions, negative_predictions, mask=None):
+def adaptive_bpr(positive_predictions, negative_predictions, mask=None):
     """
     Adaptive hinge pairwise loss function. Takes a set of predictions
     for implicitly negative items, and selects those that are highest,
@@ -166,7 +166,7 @@ def adaptive_hinge_loss(positive_predictions, negative_predictions, mask=None):
     return bpr_loss(positive_predictions, highest_negative_predictions.squeeze(), mask=mask)
 
 
-def adaptive_hinge_loss2(positive_predictions, negative_predictions, mask=None):
+def adaptive_hinge_loss(positive_predictions, negative_predictions, mask=None):
     """
     Adaptive hinge pairwise loss function. Takes a set of predictions
     for implicitly negative items, and selects those that are highest,

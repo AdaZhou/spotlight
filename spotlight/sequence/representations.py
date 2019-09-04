@@ -143,6 +143,14 @@ class PoolNet(nn.Module):
 
         return target_bias + dot
 
+    def get_embeddings(self):
+        self.eval()
+        with torch.no_grad():
+            return self.item_embeddings.weight
+
+    def get_embedding_size(self):
+        return self.item_embeddings.embedding_dim
+
 
 class LSTMNet(nn.Module):
     """
@@ -256,6 +264,14 @@ class LSTMNet(nn.Module):
                .squeeze())
 
         return target_bias + dot
+
+    def get_embeddings(self):
+        self.eval()
+        with torch.no_grad():
+            return self.item_embeddings.weight
+
+    def get_embedding_size(self):
+        return self.item_embeddings.embedding_dim
 
 
 class CNNNet(nn.Module):
@@ -451,6 +467,14 @@ class CNNNet(nn.Module):
                .squeeze())
 
         return target_bias + dot
+
+    def get_embeddings(self):
+        self.eval()
+        with torch.no_grad():
+            return self.item_embeddings.weight
+
+    def get_embedding_size(self):
+        return self.item_embeddings.embedding_dim
 
 
 class MixtureLSTMNet(nn.Module):
