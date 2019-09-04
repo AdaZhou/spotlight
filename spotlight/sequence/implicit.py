@@ -261,6 +261,7 @@ class ImplicitSequenceModel(object):
             for minibatch_num, batch_sequence in enumerate(minibatch(sequences_tensor,
                                                                      batch_size=self._batch_size)):
 
+                self._net.train()
                 sequence_var = batch_sequence
 
                 user_representation, _ = self._net.user_representation(
