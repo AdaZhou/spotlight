@@ -284,7 +284,9 @@ class ImplicitSequenceModel(object):
                 loss = self._loss_func(positive_prediction,
                                        negative_prediction,
                                        mask=(sequence_var != PADDING_IDX))
-                epoch_loss += loss.item()
+                loss_val = loss.item()
+                epoch_loss += loss_val
+                interval_loss += loss_val
 
                 loss.backward()
 
