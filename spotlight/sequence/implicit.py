@@ -21,7 +21,7 @@ from spotlight.sequence.representations import (PADDING_IDX, CNNNet,
                                                 PoolNet)
 from spotlight.sampling import sample_items
 from spotlight.torch_utils import cpu, gpu, minibatch, set_seed, shuffle
-
+import gc
 
 class ImplicitSequenceModel(object):
     """
@@ -247,6 +247,7 @@ class ImplicitSequenceModel(object):
 
         for epoch_num in range(self._n_iter):
             sequences_tensor = None
+            gc.collect()
             torch.cuda.empty_cache()
             sequences = shuffle(sequences,
                                 random_state=self._random_state)
@@ -261,6 +262,8 @@ class ImplicitSequenceModel(object):
 
             for minibatch_num, batch_sequence in enumerate(minibatch(sequences_tensor,
                                                                      batch_size=self._batch_size)):
+                if True:
+                    continue
 
                 self._net.train()
                 sequence_var = batch_sequence
@@ -329,7 +332,7 @@ class ImplicitSequenceModel(object):
                 raise ValueError('Degenerate epoch loss: {}'
                                  .format(epoch_loss))
 
-            sequences_tensor = None
+            del sequences_tensor
 
     def _get_negative_prediction(self, shape, user_representation):
 
