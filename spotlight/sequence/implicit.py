@@ -246,7 +246,8 @@ class ImplicitSequenceModel(object):
         time_step = 0
 
         for epoch_num in range(self._n_iter):
-
+            sequences_tensor = None
+            torch.cuda.empty_cache()
             sequences = shuffle(sequences,
                                 random_state=self._random_state)
 
@@ -317,6 +318,7 @@ class ImplicitSequenceModel(object):
             epoch_batches += 1
             epoch_loss /= epoch_batches
 
+
             if verbose:
                 print('Epoch {}: loss {}'.format(epoch_num, epoch_loss))
 
@@ -326,6 +328,8 @@ class ImplicitSequenceModel(object):
             if np.isnan(epoch_loss) or epoch_loss == 0.0:
                 raise ValueError('Degenerate epoch loss: {}'
                                  .format(epoch_loss))
+
+            sequences_tensor = None
 
     def _get_negative_prediction(self, shape, user_representation):
 
