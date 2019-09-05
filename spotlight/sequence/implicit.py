@@ -23,6 +23,74 @@ from spotlight.sampling import sample_items
 from spotlight.torch_utils import cpu, gpu, minibatch, set_seed, shuffle
 import gc
 
+def run_epoch(sequences_tensor, self):
+    epoch_loss = 0.0
+    interval_loss = 0.0
+    interval_batches = 0.0
+    epoch_batches = 0.0
+
+    for minibatch_num, batch_sequence in enumerate(minibatch(sequences_tensor,
+                                                             batch_size=self._batch_size)):
+        if True:
+            continue
+
+        self._net.train()
+        sequence_var = batch_sequence
+
+        user_representation, _ = self._net.user_representation(
+            sequence_var
+        )
+
+        positive_prediction = self._net(user_representation,
+                                        sequence_var)
+
+        if self._loss == 'adaptive_hinge':
+            negative_prediction = self._get_multiple_negative_predictions(
+                sequence_var.size(),
+                user_representation,
+                n=self._num_negative_samples)
+        else:
+            negative_prediction = self._get_negative_prediction(sequence_var.size(),
+                                                                user_representation)
+
+        self._optimizer.zero_grad()
+
+        loss = self._loss_func(positive_prediction,
+                               negative_prediction,
+                               mask=(sequence_var != PADDING_IDX))
+        loss_val = loss.item()
+        epoch_loss += loss_val
+        interval_loss += loss_val
+
+        loss.backward()
+
+        self._optimizer.step()
+        interval_batches += 1
+
+        if time_step % self._log_loss_interval == 0:
+            if self._notify_loss_completion:
+                self._notify_loss_completion(epoch_num,
+                                             time_step,
+                                             interval_loss / interval_batches,
+                                             self._net,
+                                             self)
+
+        if time_step % self._log_eval_interval == 0:
+            if self._notify_batch_eval_completion:
+                self._notify_batch_eval_completion(epoch_num,
+                                                   time_step,
+                                                   interval_loss / interval_batches,
+                                                   self._net,
+                                                   self)
+        if time_step % self._log_loss_interval == 0:
+            interval_loss = 0.0
+            interval_batches = 0.0
+        time_step += 1
+
+    epoch_batches += 1
+    epoch_loss /= epoch_batches
+    return epoch_loss
+
 class ImplicitSequenceModel(object):
     """
     Model for sequential recommendations using implicit feedback.
@@ -221,6 +289,7 @@ class ImplicitSequenceModel(object):
             raise ValueError('Maximum item id greater '
                              'than number of items in model.')
 
+
     def fit(self, interactions, verbose=False):
         """
         Fit the model.
@@ -246,81 +315,17 @@ class ImplicitSequenceModel(object):
         time_step = 0
 
         for epoch_num in range(self._n_iter):
-            sequences_tensor = None
-            gc.collect()
-            torch.cuda.empty_cache()
-            sequences = shuffle(sequences,
-                                random_state=self._random_state)
+            self._net.train(False)
+            with torch.no_grad:
+                sequences_tensor = None
+                gc.collect()
+                torch.cuda.empty_cache()
+                sequences = shuffle(sequences,
+                                    random_state=self._random_state)
 
-            sequences_tensor = gpu(torch.from_numpy(sequences),
-                                   self._use_cuda)
-
-            epoch_loss = 0.0
-            interval_loss = 0.0
-            interval_batches = 0.0
-            epoch_batches = 0.0
-
-            for minibatch_num, batch_sequence in enumerate(minibatch(sequences_tensor,
-                                                                     batch_size=self._batch_size)):
-                if True:
-                    continue
-
-                self._net.train()
-                sequence_var = batch_sequence
-
-                user_representation, _ = self._net.user_representation(
-                    sequence_var
-                )
-
-                positive_prediction = self._net(user_representation,
-                                                sequence_var)
-
-                if self._loss == 'adaptive_hinge':
-                    negative_prediction = self._get_multiple_negative_predictions(
-                        sequence_var.size(),
-                        user_representation,
-                        n=self._num_negative_samples)
-                else:
-                    negative_prediction = self._get_negative_prediction(sequence_var.size(),
-                                                                        user_representation)
-
-                self._optimizer.zero_grad()
-
-                loss = self._loss_func(positive_prediction,
-                                       negative_prediction,
-                                       mask=(sequence_var != PADDING_IDX))
-                loss_val = loss.item()
-                epoch_loss += loss_val
-                interval_loss += loss_val
-
-                loss.backward()
-
-                self._optimizer.step()
-                interval_batches += 1
-
-                if time_step%self._log_loss_interval == 0:
-                    if self._notify_loss_completion:
-                        self._notify_loss_completion(epoch_num,
-                                                     time_step,
-                                                     interval_loss/interval_batches,
-                                                     self._net,
-                                                     self)
-
-                if time_step%self._log_eval_interval == 0:
-                    if self._notify_batch_eval_completion:
-                        self._notify_batch_eval_completion(epoch_num,
-                                                           time_step,
-                                                           interval_loss/interval_batches,
-                                                           self._net,
-                                                           self)
-                if time_step % self._log_loss_interval == 0:
-                    interval_loss = 0.0
-                    interval_batches = 0.0
-                time_step += 1
-
-            epoch_batches += 1
-            epoch_loss /= epoch_batches
-
+                sequences_tensor = gpu(torch.from_numpy(sequences),
+                                       self._use_cuda)
+            epoch_loss = run_epoch(sequences_tensor, self)
 
             if verbose:
                 print('Epoch {}: loss {}'.format(epoch_num, epoch_loss))
