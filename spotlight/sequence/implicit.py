@@ -316,7 +316,7 @@ class ImplicitSequenceModel(object):
 
         for epoch_num in range(self._n_iter):
             self._net.train(False)
-            with torch.no_grad:
+            with torch.no_grad():
                 sequences_tensor = None
                 gc.collect()
                 torch.cuda.empty_cache()
