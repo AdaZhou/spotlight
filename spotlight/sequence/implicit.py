@@ -328,9 +328,9 @@ class ImplicitSequenceModel(object):
             if self._notify_epoch_completion:
                 self._notify_epoch_completion(epoch_num, epoch_loss, self._net, self)
 
-            if np.isnan(epoch_loss) or epoch_loss == 0.0:
-                raise ValueError('Degenerate epoch loss: {}'
-                                 .format(epoch_loss))
+            # if np.isnan(epoch_loss) or epoch_loss == 0.0:
+            #     raise ValueError('Degenerate epoch loss: {}'
+            #                      .format(epoch_loss))
 
             del sequences_tensor
 
