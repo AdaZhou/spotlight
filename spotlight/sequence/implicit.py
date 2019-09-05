@@ -23,7 +23,7 @@ from spotlight.sampling import sample_items
 from spotlight.torch_utils import cpu, gpu, minibatch, set_seed, shuffle
 import gc
 
-def run_epoch(sequences_tensor, self):
+def run_epoch(sequences_tensor, self, epoch_num, time_step):
     epoch_loss = 0.0
     interval_loss = 0.0
     interval_batches = 0.0
@@ -31,9 +31,6 @@ def run_epoch(sequences_tensor, self):
 
     for minibatch_num, batch_sequence in enumerate(minibatch(sequences_tensor,
                                                              batch_size=self._batch_size)):
-        if True:
-            continue
-
         self._net.train()
         sequence_var = batch_sequence
 
@@ -89,7 +86,7 @@ def run_epoch(sequences_tensor, self):
 
     epoch_batches += 1
     epoch_loss /= epoch_batches
-    return epoch_loss
+    return epoch_loss, time_step
 
 class ImplicitSequenceModel(object):
     """
@@ -325,7 +322,7 @@ class ImplicitSequenceModel(object):
 
                 sequences_tensor = gpu(torch.from_numpy(sequences),
                                        self._use_cuda)
-            epoch_loss = run_epoch(sequences_tensor, self)
+            epoch_loss, time_step = run_epoch(sequences_tensor, self, epoch_num, time_step)
 
             if verbose:
                 print('Epoch {}: loss {}'.format(epoch_num, epoch_loss))
@@ -333,9 +330,9 @@ class ImplicitSequenceModel(object):
             if self._notify_epoch_completion:
                 self._notify_epoch_completion(epoch_num, epoch_loss, self._net, self)
 
-            # if np.isnan(epoch_loss) or epoch_loss == 0.0:
-            #     raise ValueError('Degenerate epoch loss: {}'
-            #                      .format(epoch_loss))
+            if np.isnan(epoch_loss) or epoch_loss == 0.0:
+                raise ValueError('Degenerate epoch loss: {}'
+                                 .format(epoch_loss))
 
             del sequences_tensor
 
