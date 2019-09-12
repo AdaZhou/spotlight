@@ -23,8 +23,7 @@ def _to_iterable(val, num):
     except TypeError:
         return (val,) * num
 
-
-class PoolNet(nn.Module):
+class PoolNet2(nn.Module):
     """
     Module representing users through averaging the representations of items
     they have interacted with, a'la [1]_.
@@ -142,6 +141,155 @@ class PoolNet(nn.Module):
                .sum(1))
 
         return target_bias + dot
+
+    def get_embeddings(self):
+        self.eval()
+        with torch.no_grad():
+            return self.item_embeddings.weight
+
+    def get_embedding_size(self):
+        return self.item_embeddings.embedding_dim
+
+
+class PoolNet(nn.Module):
+    """
+    Module representing users through averaging the representations of items
+    they have interacted with, a'la [1]_.
+
+    To represent a sequence, it simply averages the representations of all
+    the items that occur in the sequence up to that point.
+
+    During training, representations for all timesteps of the sequence are
+    computed in one go. Loss functions using the outputs will therefore
+    be aggregating both across the minibatch and across time in the sequence.
+
+    Parameters
+    ----------
+
+    num_items: int
+        Number of items to be represented.
+    embedding_dim: int, optional
+        Embedding dimension of the embedding layer.
+    item_embedding_layer: an embedding layer, optional
+        If supplied, will be used as the item embedding layer
+        of the network.
+
+    References
+    ----------
+
+    .. [1] Covington, Paul, Jay Adams, and Emre Sargin. "Deep neural networks for
+       youtube recommendations." Proceedings of the 10th ACM Conference
+       on Recommender Systems. ACM, 2016.
+
+    """
+
+    def __init__(self, num_items, embedding_dim=32,
+                 item_embedding_layer=None,
+                 sparse=False,
+                 layers=[],
+                 nonlinearity='relu'):
+
+        super(PoolNet, self).__init__()
+
+        self.embedding_dim = embedding_dim
+
+        if nonlinearity == 'tanh':
+            self.nonlinearity = F.tanh
+        elif nonlinearity == 'relu':
+            self.nonlinearity = F.relu
+        else:
+            raise ValueError('Nonlinearity must be one of (tanh, relu)')
+
+        if item_embedding_layer is not None:
+            self.item_embeddings = item_embedding_layer
+        else:
+            self.item_embeddings = ScaledEmbedding(num_items, embedding_dim,
+                                                   padding_idx=PADDING_IDX,
+                                                   sparse=sparse)
+
+        self.item_biases = ZeroEmbedding(num_items, 1, sparse=sparse,
+                                         padding_idx=PADDING_IDX)
+        self.fc_layers =  None
+        if layers and len(layers) > 0:
+            self.fc_layers = torch.nn.ModuleList()
+            for idx, (in_size, out_size) in enumerate(zip(layers[:-1], layers[1:])):
+                self.fc_layers.append(torch.nn.Linear(in_size, out_size))
+
+    def user_representation(self, item_sequences):
+        """
+        Compute user representation from a given sequence.
+
+        Returns
+        -------
+
+        tuple (all_representations, final_representation)
+            The first element contains all representations from step
+            -1 (no items seen) to t - 1 (all but the last items seen).
+            The second element contains the final representation
+            at step t (all items seen). This final state can be used
+            for prediction or evaluation.
+        """
+
+        # Make the embedding dimension the channel dimension
+        sequence_embeddings = (self.item_embeddings(item_sequences)
+                               .permute(0, 2, 1))
+
+        # Add a trailing dimension of 1
+        sequence_embeddings = (sequence_embeddings
+                               .unsqueeze(3))
+
+        # Pad it with zeros from left
+        sequence_embeddings = F.pad(sequence_embeddings,
+                                    (0, 0, 1, 0))
+
+        # Average representations, ignoring padding.
+        sequence_embedding_sum = torch.cumsum(sequence_embeddings, 2)
+        non_padding_entries = (
+            torch.cumsum((sequence_embeddings != 0.0).float(), 2)
+            .expand_as(sequence_embedding_sum)
+        )
+
+        user_representations = (
+            sequence_embedding_sum / (non_padding_entries + 1)
+        ).squeeze(3)
+
+        return user_representations[:, :, :-1], user_representations[:, :, -1]
+
+    def forward(self, user_representations, targets):
+        """
+        Compute predictions for target items given user representations.
+
+        Parameters
+        ----------
+
+        user_representations: tensor
+            Result of the user_representation_method.
+        targets: tensor
+            Minibatch of item sequences of shape
+            (minibatch_size, sequence_length).
+
+        Returns
+        -------
+
+        predictions: tensor
+            of shape (minibatch_size, sequence_length)
+        """
+
+        target_embedding = (self.item_embeddings(targets)
+                            .permute(0, 2, 1)
+                            .squeeze())
+
+        vector = torch.cat([user_representations, target_embedding], dim=-1)
+        if self.fc_layers:
+            for idx, _ in enumerate(range(len(self.fc_layers)-1)):
+                vector = self.nonlinearity(self.fc_layers[idx](vector))
+            final_output = self.fc_layers[-1](vector)
+            return final_output.squeeze()
+        else:
+            target_bias = self.item_biases(targets).squeeze()
+            dot = ((user_representations * target_embedding)
+                   .sum(1))
+            return target_bias + dot
 
     def get_embeddings(self):
         self.eval()
